@@ -1,6 +1,9 @@
 target/
 build/
 PROGRESS.md
+website/node_modules/
+website/build/
+website/.docusaurus/
 ref2_output/
 *.o
 *.a
