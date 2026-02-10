@@ -1,0 +1,24 @@
+{
+  "id": "intro",
+  "title": "ref2",
+  "description": "ref2 is a tool for automatically inferring the grammar and message format of unknown network protocols from packet captures, binary dumps, plaintext logs, or strace output — without any prior knowledge of the protocol.",
+  "source": "@site/docs/intro.md",
+  "sourceDirName": ".",
+  "slug": "/",
+  "permalink": "/",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 1,
+  "frontMatter": {
+    "id": "intro",
+    "slug": "/",
+    "sidebar_position": 1
+  },
+  "sidebar": "mainSidebar",
+  "next": {
+    "title": "installation",
+    "permalink": "/getting-started/installation"
+  }
+}

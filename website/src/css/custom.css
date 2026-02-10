@@ -1,0 +1,110 @@
+/* ref2 docs — custom theme */
+
+:root {
+  --ifm-color-primary:         #7c6af7;
+  --ifm-color-primary-dark:    #6454f5;
+  --ifm-color-primary-darker:  #5848f4;
+  --ifm-color-primary-darkest: #3326f1;
+  --ifm-color-primary-light:   #9480f9;
+  --ifm-color-primary-lighter: #a08cfa;
+  --ifm-color-primary-lightest: #c4b8fc;
+
+  --ifm-font-family-base:      'Inter', 'Segoe UI', system-ui, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --ifm-code-font-size:        92%;
+  --ifm-heading-font-weight:   600;
+  --docusaurus-highlighted-code-line-bg: rgba(124, 106, 247, 0.12);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary:         #9f8ffa;
+  --ifm-color-primary-dark:    #8776f8;
+  --ifm-color-primary-darker:  #7c6af7;
+  --ifm-color-primary-darkest: #5848f4;
+  --ifm-color-primary-light:   #b7aafc;
+  --ifm-color-primary-lighter: #c4b8fc;
+  --ifm-color-primary-lightest: #e0dafd;
+
+  --ifm-background-color:      #0f0f13;
+  --ifm-background-surface-color: #16161d;
+  --docusaurus-highlighted-code-line-bg: rgba(159, 143, 250, 0.15);
+}
+
+/* ── typography ─────────────────────────────────────────────────────────────── */
+
+h1, h2, h3, h4, h5, h6,
+.navbar__title,
+.menu__link,
+.table-of-contents__link,
+.footer__title,
+.footer__link-item,
+.breadcrumbs__link,
+.tabs__item,
+.badge,
+.button {
+  text-transform: lowercase;
+}
+
+.hero__title,
+.hero__subtitle {
+  text-transform: lowercase;
+}
+
+/* ── navbar ─────────────────────────────────────────────────────────────────── */
+
+.navbar {
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  backdrop-filter: blur(8px);
+}
+
+.navbar__title {
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  font-size: 1.1rem;
+}
+
+/* ── sidebar ─────────────────────────────────────────────────────────────────── */
+
+.menu__link {
+  font-size: 0.88rem;
+  border-radius: 6px;
+}
+
+.menu__link--active {
+  font-weight: 600;
+}
+
+/* ── code blocks ─────────────────────────────────────────────────────────────── */
+
+.prism-code {
+  border-radius: 8px;
+}
+
+code {
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* ── admonitions ─────────────────────────────────────────────────────────────── */
+
+.admonition {
+  border-radius: 8px;
+}
+
+/* ── content ─────────────────────────────────────────────────────────────────── */
+
+article h1:first-child {
+  font-size: 2rem;
+}
+
+.markdown > h2 {
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+  padding-top: 1.2rem;
+  margin-top: 2.5rem;
+}
+
+/* ── footer ─────────────────────────────────────────────────────────────────── */
+
+.footer {
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+}

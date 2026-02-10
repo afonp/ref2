@@ -1,0 +1,103 @@
+{
+  "docusaurus-plugin-content-docs": {
+    "default": {
+      "path": "/",
+      "versions": [
+        {
+          "name": "current",
+          "label": "Next",
+          "isLast": true,
+          "path": "/",
+          "mainDocId": "intro",
+          "docs": [
+            {
+              "id": "architecture",
+              "path": "/architecture",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "cli/dissect",
+              "path": "/cli/dissect",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "cli/infer",
+              "path": "/cli/infer",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "cli/view",
+              "path": "/cli/view",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "evaluation/metrics",
+              "path": "/evaluation/metrics",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "evaluation/protocols",
+              "path": "/evaluation/protocols",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "getting-started/installation",
+              "path": "/getting-started/installation",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "getting-started/quickstart",
+              "path": "/getting-started/quickstart",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "internals/format-inference",
+              "path": "/internals/format-inference",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "internals/grammar-induction",
+              "path": "/internals/grammar-induction",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "internals/ingestion",
+              "path": "/internals/ingestion",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "internals/output-formats",
+              "path": "/internals/output-formats",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "internals/overview",
+              "path": "/internals/overview",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "internals/tokenization",
+              "path": "/internals/tokenization",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "intro",
+              "path": "/",
+              "sidebar": "mainSidebar"
+            }
+          ],
+          "draftIds": [],
+          "sidebars": {
+            "mainSidebar": {
+              "link": {
+                "path": "/",
+                "label": "intro"
+              }
+            }
+          }
+        }
+      ],
+      "breadcrumbs": true
+    }
+  }
+}

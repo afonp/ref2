@@ -1,0 +1,26 @@
+{
+  "id": "internals/ingestion",
+  "title": "phase 1 — ingestion",
+  "description": "source: c/ingest/",
+  "source": "@site/docs/internals/ingestion.md",
+  "sourceDirName": "internals",
+  "slug": "/internals/ingestion",
+  "permalink": "/internals/ingestion",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 2,
+  "frontMatter": {
+    "sidebar_position": 2
+  },
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "pipeline overview",
+    "permalink": "/internals/overview"
+  },
+  "next": {
+    "title": "phase 2 — tokenization & framing",
+    "permalink": "/internals/tokenization"
+  }
+}

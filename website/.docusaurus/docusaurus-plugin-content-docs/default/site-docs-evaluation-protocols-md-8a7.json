@@ -1,0 +1,26 @@
+{
+  "id": "evaluation/protocols",
+  "title": "test protocols",
+  "description": "the evaluation suite uses these protocols as ground truth — all are well-documented with official wireshark dissectors, making them ideal for measuring ref2's accuracy.",
+  "source": "@site/docs/evaluation/protocols.md",
+  "sourceDirName": "evaluation",
+  "slug": "/evaluation/protocols",
+  "permalink": "/evaluation/protocols",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 2,
+  "frontMatter": {
+    "sidebar_position": 2
+  },
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "accuracy metrics",
+    "permalink": "/evaluation/metrics"
+  },
+  "next": {
+    "title": "architecture",
+    "permalink": "/architecture"
+  }
+}

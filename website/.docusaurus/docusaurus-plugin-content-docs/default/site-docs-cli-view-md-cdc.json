@@ -1,0 +1,26 @@
+{
+  "id": "cli/view",
+  "title": "ref2 view",
+  "description": "render a graphviz dot file and open it in a viewer.",
+  "source": "@site/docs/cli/view.md",
+  "sourceDirName": "cli",
+  "slug": "/cli/view",
+  "permalink": "/cli/view",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 3,
+  "frontMatter": {
+    "sidebar_position": 3
+  },
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "ref2 dissect",
+    "permalink": "/cli/dissect"
+  },
+  "next": {
+    "title": "pipeline overview",
+    "permalink": "/internals/overview"
+  }
+}

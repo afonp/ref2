@@ -1,0 +1,26 @@
+{
+  "id": "getting-started/quickstart",
+  "title": "quickstart",
+  "description": "this walkthrough takes you from a raw pcap to a scapy dissector in under two minutes.",
+  "source": "@site/docs/getting-started/quickstart.md",
+  "sourceDirName": "getting-started",
+  "slug": "/getting-started/quickstart",
+  "permalink": "/getting-started/quickstart",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 2,
+  "frontMatter": {
+    "sidebar_position": 2
+  },
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "installation",
+    "permalink": "/getting-started/installation"
+  },
+  "next": {
+    "title": "ref2 infer",
+    "permalink": "/cli/infer"
+  }
+}

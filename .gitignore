@@ -1,0 +1,12 @@
+target/
+build/
+PROGRESS.md
+ref2_output/
+*.o
+*.a
+*.d
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+.DS_Store
