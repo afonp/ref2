@@ -34,7 +34,7 @@ static int hex_digit(char c)
 
 /* Decode a hex string (with optional spaces/colons) into dst.
    Returns number of bytes written, or -1 on error. */
-static ssize_t hex_decode(const char *src, uint8_t *dst, size_t dst_cap)
+static long hex_decode(const char *src, uint8_t *dst, size_t dst_cap)
 {
     size_t out = 0;
     size_t len = strlen(src);
@@ -49,7 +49,7 @@ static ssize_t hex_decode(const char *src, uint8_t *dst, size_t dst_cap)
         if (out >= dst_cap) return -1;
         dst[out++] = (uint8_t)((hi << 4) | lo);
     }
-    return (ssize_t)out;
+    return (long)out;
 }
 
 /* >80% printable → treat as ASCII, else hex. */
@@ -130,7 +130,7 @@ static int parse_direction_prefixed(FILE *f, session_t *sess)
         if (is_mostly_printable(payload_str, plen)) {
             add_msg(sess, (const uint8_t *)payload_str, plen, dir, idx++);
         } else {
-            ssize_t n = hex_decode(payload_str, buf, sizeof(buf));
+            long n = hex_decode(payload_str, buf, sizeof(buf));
             if (n > 0)
                 add_msg(sess, buf, (size_t)n, dir, idx++);
         }
@@ -221,7 +221,7 @@ static int parse_plain_lines(FILE *f, session_t *sess)
         if (is_mostly_printable(p, plen)) {
             add_msg(sess, (const uint8_t *)p, plen, 0, idx++);
         } else {
-            ssize_t n = hex_decode(p, buf, sizeof(buf));
+            long n = hex_decode(p, buf, sizeof(buf));
             if (n > 0)
                 add_msg(sess, buf, (size_t)n, 0, idx++);
         }

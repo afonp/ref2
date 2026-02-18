@@ -33,6 +33,15 @@ typedef struct {
     uint32_t daddr;
 } r2_iphdr_t;
 
+typedef struct {
+    uint8_t  ver_tc_fl[4];   /* version(4) + traffic class(8) + flow label(20) */
+    uint16_t payload_len;
+    uint8_t  next_hdr;
+    uint8_t  hop_limit;
+    uint8_t  src[16];
+    uint8_t  dst[16];
+} r2_ip6hdr_t;
+
 /* Minimal TCP header. */
 typedef struct {
     uint16_t source;
@@ -107,6 +116,7 @@ static tcp_stream_t *find_or_alloc(uint32_t sip, uint16_t sp,
     uint32_t a0 = flip ? dip : sip,  a1 = flip ? sip : dip;
     uint16_t p0 = flip ? dp  : sp,   p1 = flip ? sp  : dp;
 
+    /* TODO: hash table if MAX_SESSIONS gets large */
     for (int i = 0; i < g_stream_count; i++) {
         tcp_stream_t *s = g_streams[i];
         if (s->addr[0] == a0 && s->addr[1] == a1 &&
@@ -202,14 +212,36 @@ static void pkt_handler(u_char *user, const struct pcap_pkthdr *hdr,
     (void)user;
 
     size_t cap = hdr->caplen;
-    if (cap < ETH_HDR_LEN + sizeof(r2_iphdr_t)) return;
+    if (cap < ETH_HDR_LEN + 1) return;
 
-    const r2_iphdr_t *ip = (const r2_iphdr_t *)(pkt + ETH_HDR_LEN);
-    if ((ip->ver_ihl >> 4) != 4)  return;   /* IPv4 only */
-    if (ip->protocol != IPPROTO_TCP) return;
+    const uint8_t *l3 = pkt + ETH_HDR_LEN;
+    int version = (*l3) >> 4;
 
-    int ip_hlen = (ip->ver_ihl & 0x0f) * 4;
-    const uint8_t *tcp_ptr = (const uint8_t *)ip + ip_hlen;
+    const uint8_t *tcp_ptr;
+    uint32_t sip, dip;
+
+    if (version == 4) {
+        if (cap < ETH_HDR_LEN + sizeof(r2_iphdr_t)) return;
+        const r2_iphdr_t *ip = (const r2_iphdr_t *)l3;
+        if (ip->protocol != IPPROTO_TCP) return;
+        int ip_hlen = (ip->ver_ihl & 0x0f) * 4;
+        tcp_ptr = l3 + ip_hlen;
+        sip = ntohl(ip->saddr);
+        dip = ntohl(ip->daddr);
+    } else if (version == 6) {
+        if (cap < ETH_HDR_LEN + sizeof(r2_ip6hdr_t)) return;
+        const r2_ip6hdr_t *ip6 = (const r2_ip6hdr_t *)l3;
+        if (ip6->next_hdr != IPPROTO_TCP) return;
+        tcp_ptr = l3 + sizeof(r2_ip6hdr_t);
+        /* good enough for flow tracking, collisions are fine */
+        uint32_t *s6 = (uint32_t *)ip6->src;
+        uint32_t *d6 = (uint32_t *)ip6->dst;
+        sip = s6[0] ^ s6[1] ^ s6[2] ^ s6[3];
+        dip = d6[0] ^ d6[1] ^ d6[2] ^ d6[3];
+    } else {
+        return;
+    }
+
     if ((size_t)(tcp_ptr - pkt) + sizeof(r2_tcphdr_t) > cap) return;
 
     const r2_tcphdr_t *tcp = (const r2_tcphdr_t *)tcp_ptr;
@@ -221,8 +253,6 @@ static void pkt_handler(u_char *user, const struct pcap_pkthdr *hdr,
     if (payload_len == 0 && !(ntohs(tcp->flags) & (TCP_FLAG_SYN | TCP_FLAG_FIN)))
         return;
 
-    uint32_t sip = ntohl(ip->saddr);
-    uint32_t dip = ntohl(ip->daddr);
     uint16_t sp  = ntohs(tcp->source);
     uint16_t dp  = ntohs(tcp->dest);
     uint32_t seq = ntohl(tcp->seq);
