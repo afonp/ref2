@@ -9,6 +9,7 @@
 #include <string.h>
 #include <math.h>
 #include <float.h>
+#include <time.h>
 
 #define KMEANS_RESTARTS  10
 #define KMEANS_ITERS     100
@@ -128,6 +129,9 @@ static double kmeans_run(double (*hists)[256], size_t n, int k,
 uint32_t *cluster_messages(token_stream_t **streams, size_t nstreams,
                             size_t *total_msgs_out, int *k_out)
 {
+    static int seeded = 0;
+    if (!seeded) { srand((unsigned)time(NULL)); seeded = 1; }
+
     /* Flatten all tokens. */
     size_t total = 0;
     for (size_t si = 0; si < nstreams; si++) total += streams[si]->count;
