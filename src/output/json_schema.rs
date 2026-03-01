@@ -10,6 +10,7 @@ pub fn emit<W: Write>(
     input_path: &str,
     schema: &ProtocolSchema,
     fsm: &Fsm,
+    anomaly_scores: &[(usize, f64)],
 ) -> io::Result<()> {
     let message_types: Vec<Value> = schema.schemas.iter().map(|ms| {
         let fields: Vec<Value> = ms.fields.iter().map(|f| {
@@ -48,6 +49,14 @@ pub fn emit<W: Write>(
         "frequency":    (t.frequency * 10000.0).round() / 10000.0,
     })).collect();
 
+    let anomalies: Vec<Value> = anomaly_scores.iter()
+        .filter(|&&(_, s)| s > 0.1)
+        .map(|&(session, score)| json!({
+            "session": session,
+            "score":   (score * 1000.0).round() / 1000.0,
+        }))
+        .collect();
+
     let doc = json!({
         "protocol":      "unknown",
         "inferred_from": input_path,
@@ -56,6 +65,7 @@ pub fn emit<W: Write>(
             "states":      states_json,
             "transitions": transitions_json,
         },
+        "anomalies": anomalies,
     });
 
     let pretty = serde_json::to_string_pretty(&doc)
