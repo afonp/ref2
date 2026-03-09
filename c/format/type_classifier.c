@@ -170,9 +170,24 @@ field_type_t classify_field(token_t **msgs, size_t n,
 
     double H = field_entropy(msgs, n, offset, length);
 
-    /* MAGIC / CONSTANT */
+    /* MAGIC / CONSTANT — both are invariant across all messages.
+     * MAGIC: protocol sync bytes. usually at offset 0, or contains
+     *        known sentinel values (0xff, 0xfe, non-zero "marker" bytes).
+     * CONSTANT: field that just never varies (padding, version byte, etc.) */
     if (is_constant(msgs, n, offset, length)) {
-        /* Check for well-known magic patterns (0xff, 0x00 repeated, etc.) */
+        /* assume magic if at start of message, or value looks sentinel-ish */
+        if (msgs[0]->len >= offset + length) {
+            int looks_magic = (offset == 0);
+            if (!looks_magic) {
+                /* check if any byte is 0xff, 0xfe, or a non-trivial marker */
+                for (size_t b = 0; b < length && !looks_magic; b++) {
+                    uint8_t byte = msgs[0]->data[offset + b];
+                    if (byte == 0xff || byte == 0xfe || byte == 0xfd)
+                        looks_magic = 1;
+                }
+            }
+            return looks_magic ? FIELD_MAGIC : FIELD_CONSTANT;
+        }
         return FIELD_MAGIC;
     }
 

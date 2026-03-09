@@ -287,6 +287,12 @@ impl Pipeline {
         ProtocolSchema { schemas, raw }
     }
 
+    /// Number of token streams (== number of sessions ingested).
+    pub fn stream_count(&self) -> usize { self.nstreams }
+
+    /// Raw pointer to the streams array (for dissect — use with care).
+    pub fn streams_ptr(&self) -> *const *mut CTokenStreamT { self.streams }
+
     /// Extract per-session message type sequences for grammar induction.
     pub fn sequences(&self) -> SessionSequences {
         let mut sequences = Vec::new();
