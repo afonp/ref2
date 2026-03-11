@@ -1,3 +1,4 @@
+mod dissect;
 mod ffi;
 mod grammar;
 mod output;
@@ -15,6 +16,10 @@ use output::EmitFormat;
 #[derive(Parser, Debug)]
 #[command(name = "ref2", version, about = "Automatic protocol grammar & format inference")]
 struct Cli {
+    /// Print extra progress and debug output.
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -70,6 +75,10 @@ struct InferArgs {
     /// Clustering strategy (auto, type-field, kmeans).
     #[arg(long, default_value = "auto")]
     cluster: String,
+
+    /// Print per-field entropy and classification details.
+    #[arg(short = 'v', long)]
+    verbose: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -108,6 +117,7 @@ enum EmitArg {
     Json,
     Dot,
     Scapy,
+    Lua,
     All,
 }
 
@@ -178,6 +188,15 @@ fn cmd_infer(args: InferArgs) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Format inference failed"))?;
 
     eprintln!("ref2: {} message type(s) inferred", schema.schemas.len());
+    if args.verbose {
+        for ms in &schema.schemas {
+            eprintln!("  [{}] {} field(s):", ms.name, ms.fields.len());
+            for f in &ms.fields {
+                eprintln!("    {:24} off={} len={} type={} H={:.2}",
+                          f.name, f.offset, f.length, f.type_name(), f.entropy);
+            }
+        }
+    }
 
     // Build schema name map for grammar induction.
     let schema_names: HashMap<u32, String> = schema.schemas.iter()
@@ -213,6 +232,7 @@ fn cmd_infer(args: InferArgs) -> anyhow::Result<()> {
         EmitArg::Json  => EmitFormat::Json,
         EmitArg::Dot   => EmitFormat::Dot,
         EmitArg::Scapy => EmitFormat::Scapy,
+        EmitArg::Lua   => EmitFormat::Lua,
         EmitArg::All   => EmitFormat::All,
     };
 
@@ -220,7 +240,7 @@ fn cmd_infer(args: InferArgs) -> anyhow::Result<()> {
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
-    output::write_all(&args.output_dir, input_name, &schema, &fsm, emit_fmt)?;
+    output::write_all(&args.output_dir, input_name, &schema, &fsm, emit_fmt, &scores)?;
 
     eprintln!("ref2: done → {}", args.output_dir.display());
     Ok(())
@@ -231,10 +251,7 @@ fn cmd_dissect(args: DissectArgs) -> anyhow::Result<()> {
     if !schema_path.exists() {
         anyhow::bail!("schema.json not found in {}", args.schema.display());
     }
-    eprintln!("ref2 dissect: not yet implemented");
-    eprintln!("  schema: {}", schema_path.display());
-    eprintln!("  input:  {}", args.input.display());
-    Ok(())
+    dissect::run_dissect(&args.schema, &args.input)
 }
 
 fn cmd_view(args: ViewArgs) -> anyhow::Result<()> {
@@ -263,6 +280,8 @@ fn cmd_view(args: ViewArgs) -> anyhow::Result<()> {
 
 fn main() {
     let cli = Cli::parse();
+    // stash verbose for subcommands that want it
+    let _verbose = cli.verbose;
     let result = match cli.command {
         Command::Infer(a)   => cmd_infer(a),
         Command::Dissect(a) => cmd_dissect(a),
