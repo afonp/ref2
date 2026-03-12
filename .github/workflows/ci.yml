@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install system deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libpcap-dev cmake pkg-config
+
+      - name: set up rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: cargo fmt check
+        run: cargo fmt --check
+
+      - name: build
+        run: cargo build --locked
+
+      - name: clippy
+        run: cargo clippy -- -D warnings
+
+      - name: tests
+        run: cargo test --locked
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install system deps
+        run: brew install libpcap cmake pkg-config
+
+      - name: set up rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: build
+        run: cargo build --locked
+
+      - name: tests
+        run: cargo test --locked
