@@ -101,6 +101,47 @@ static int nw_align(const uint8_t *a, size_t la,
  * running consensus.  For larger clusters we sample 50 pairs to build a
  * guide tree (simplified to a linear merge order by similarity).
  */
+/* Sample at most GUIDE_SAMPLE random pairs and compute NW similarity scores.
+   Returns an ordering of [0..n) from most-central to least. */
+#define GUIDE_SAMPLE 50
+#define LARGE_CLUSTER 200
+
+static size_t *guide_tree_order(token_t **msgs, size_t n)
+{
+    size_t *order = malloc(n * sizeof(size_t));
+    double *score = calloc(n, sizeof(double));
+    if (!order || !score) { free(order); free(score); return NULL; }
+    for (size_t i = 0; i < n; i++) order[i] = i;
+
+    /* sample pairs and accumulate similarity scores per message */
+    size_t npairs = n < GUIDE_SAMPLE ? n*(n-1)/2 : GUIDE_SAMPLE;
+    for (size_t p = 0; p < npairs; p++) {
+        size_t i = (size_t)rand() % n;
+        size_t j = (size_t)rand() % n;
+        if (i == j) continue;
+        int s = nw_align(msgs[i]->data, msgs[i]->len,
+                         msgs[j]->data, msgs[j]->len,
+                         NULL, NULL, NULL);
+        /* accumulate: higher score = more central */
+        score[i] += s > 0 ? (double)s : 0.0;
+        score[j] += s > 0 ? (double)s : 0.0;
+    }
+
+    /* sort descending by score (insertion sort, small enough) */
+    for (size_t i = 1; i < n; i++) {
+        size_t key = order[i];
+        double ks  = score[key];
+        long j = (long)i - 1;
+        while (j >= 0 && score[order[j]] < ks) {
+            order[j+1] = order[j]; j--;
+        }
+        order[j+1] = key;
+    }
+
+    free(score);
+    return order;
+}
+
 double *align_cluster(token_t **msgs, size_t n, size_t *consensus_len_out)
 {
     if (n == 0) { *consensus_len_out = 0; return NULL; }
@@ -111,20 +152,26 @@ double *align_cluster(token_t **msgs, size_t n, size_t *consensus_len_out)
         return cons;
     }
 
-    /* Determine merge order: sort by length (heuristic guide tree). */
-    size_t *order = malloc(n * sizeof(size_t));
-    if (!order) return NULL;
-    for (size_t i = 0; i < n; i++) order[i] = i;
+    size_t *order;
 
-    /* Insertion-sort by length ascending. */
-    for (size_t i = 1; i < n; i++) {
-        size_t key = order[i];
-        size_t klen = msgs[key]->len;
-        ssize_t j = (ssize_t)i - 1;
-        while (j >= 0 && msgs[order[j]]->len > klen) {
-            order[j+1] = order[j]; j--;
+    if (n > LARGE_CLUSTER) {
+        /* large cluster: use sampled guide tree ordering */
+        order = guide_tree_order(msgs, n);
+    } else {
+        /* small cluster: insertion-sort by length ascending (cheap heuristic) */
+        order = malloc(n * sizeof(size_t));
+        if (order) {
+            for (size_t i = 0; i < n; i++) order[i] = i;
+            for (size_t i = 1; i < n; i++) {
+                size_t key = order[i];
+                size_t klen = msgs[key]->len;
+                long j = (long)i - 1;
+                while (j >= 0 && msgs[order[j]]->len > klen) {
+                    order[j+1] = order[j]; j--;
+                }
+                order[j+1] = key;
+            }
         }
-        order[j+1] = key;
     }
 
     /* Build a consensus byte sequence by progressive alignment.
