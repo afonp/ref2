@@ -186,12 +186,56 @@ static void detect_type_field(const session_t *sessions, size_t nsess,
             best_count = ndist;
         }
     }
+
+    /* also try 2-byte windows (some protocols use u16 type fields) */
+    for (size_t pos = 0; pos + 1 < hdr_len; pos++) {
+        if (out->has_length_field &&
+            pos >= len_offset && pos < len_offset + len_width)
+            continue;
+
+        /* count distinct 2-byte values */
+        uint32_t seen2[64];
+        size_t   nseen2 = 0, total2 = 0;
+        for (size_t si = 0; si < nsess; si++) {
+            for (size_t mi = 0; mi < sessions[si].count; mi++) {
+                const message_t *m = &sessions[si].messages[mi];
+                if (m->payload_len < pos + 2) continue;
+                uint32_t v = ((uint32_t)m->payload[pos] << 8) | m->payload[pos+1];
+                int found = 0;
+                for (size_t k = 0; k < nseen2; k++)
+                    if (seen2[k] == v) { found = 1; break; }
+                if (!found && nseen2 < 64) seen2[nseen2++] = v;
+                total2++;
+            }
+        }
+
+        if (nseen2 < TYPE_MIN_VALS || nseen2 > TYPE_MAX_VALS) continue;
+
+        double score2 = (double)(TYPE_MAX_VALS - nseen2 + 1) * (double)total2 * 0.9;
+        /* slight penalty vs 1-byte so we only prefer 2-byte when 1-byte isn't good */
+        if (score2 > best_score) {
+            best_score = score2;
+            best_pos   = pos;
+            best_count = nseen2;
+        }
+    }
     (void)best_count;
 
     if (best_score > 0.0) {
         out->has_type_field = 1;
         out->type_offset    = best_pos;
-        out->type_width     = 1;
+        /* figure out whether the best pos matched 1-byte or 2-byte */
+        {
+            uint8_t seen1[256] = {0};
+            size_t  ndist1 = 0;
+            for (size_t si = 0; si < nsess; si++)
+                for (size_t mi = 0; mi < sessions[si].count; mi++) {
+                    const message_t *m = &sessions[si].messages[mi];
+                    if (m->payload_len > best_pos && !seen1[m->payload[best_pos]])
+                        seen1[m->payload[best_pos]] = 1, ndist1++;
+                }
+            out->type_width = (ndist1 >= TYPE_MIN_VALS && ndist1 <= TYPE_MAX_VALS) ? 1 : 2;
+        }
     }
 }
 
