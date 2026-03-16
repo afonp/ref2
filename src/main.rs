@@ -20,6 +20,10 @@ struct Cli {
     #[arg(short, long, global = true)]
     verbose: bool,
 
+    /// Suppress all progress output (only errors go to stderr).
+    #[arg(short, long, global = true)]
+    quiet: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -79,6 +83,10 @@ struct InferArgs {
     /// Print per-field entropy and classification details.
     #[arg(short = 'v', long)]
     verbose: bool,
+
+    /// Suppress all progress output.
+    #[arg(short = 'q', long)]
+    quiet: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -118,6 +126,7 @@ enum EmitArg {
     Dot,
     Scapy,
     Lua,
+    Kaitai,
     All,
 }
 
@@ -167,7 +176,14 @@ fn parse_frame_hint(s: &str) -> Option<ffi::CFrameHintT> {
 
 // ── Subcommand implementations ────────────────────────────────────────────────
 
+macro_rules! info {
+    ($quiet:expr, $($arg:tt)*) => {
+        if !$quiet { eprintln!($($arg)*); }
+    };
+}
+
 fn cmd_infer(args: InferArgs) -> anyhow::Result<()> {
+    let q = args.quiet;
     let ingest_fmt = match args.format {
         InputFormat::Pcap      => IngestFormat::Pcap,
         InputFormat::Plaintext => IngestFormat::Plaintext,
@@ -179,16 +195,16 @@ fn cmd_infer(args: InferArgs) -> anyhow::Result<()> {
         }
     };
 
-    eprintln!("ref2: ingesting {:?}", args.input);
+    info!(q, "ref2: ingesting {:?}", args.input);
     let pipeline = Pipeline::run(&args.input, ingest_fmt)
         .ok_or_else(|| anyhow::anyhow!("Failed to ingest {:?}", args.input))?;
 
-    eprintln!("ref2: inferring format…");
+    info!(q, "ref2: inferring format…");
     let schema = pipeline.infer_schema()
         .ok_or_else(|| anyhow::anyhow!("Format inference failed"))?;
 
-    eprintln!("ref2: {} message type(s) inferred", schema.schemas.len());
-    if args.verbose {
+    info!(q, "ref2: {} message type(s) inferred", schema.schemas.len());
+    if args.verbose && !q {
         for ms in &schema.schemas {
             eprintln!("  [{}] {} field(s):", ms.name, ms.fields.len());
             for f in &ms.fields {
@@ -205,23 +221,23 @@ fn cmd_infer(args: InferArgs) -> anyhow::Result<()> {
 
     // Extract session sequences.
     let sess = pipeline.sequences();
-    eprintln!("ref2: {} session(s) available for grammar induction",
-              sess.sequences.len());
+    info!(q, "ref2: {} session(s) available for grammar induction",
+          sess.sequences.len());
 
     let algo = match args.algo {
         AlgoArg::Ktails => Algorithm::KTails,
         AlgoArg::Rpni   => Algorithm::Rpni,
     };
 
-    eprintln!("ref2: running {:?} (k={})…", algo, args.k);
+    info!(q, "ref2: running {:?} (k={})…", algo, args.k);
     let fsm = induce(&sess.sequences, args.k, algo, &schema_names, args.min_sessions);
-    eprintln!("ref2: {} state(s), {} transition(s)",
-              fsm.states.len(), fsm.transitions.len());
+    info!(q, "ref2: {} state(s), {} transition(s)",
+          fsm.states.len(), fsm.transitions.len());
 
     // Anomaly scoring.
     let scores = score_anomalies(&fsm, &sess.sequences);
     let anomalous: Vec<_> = scores.iter().filter(|&&(_, s)| s > 0.5).collect();
-    if !anomalous.is_empty() {
+    if !anomalous.is_empty() && !q {
         eprintln!("ref2: {} anomalous session(s) detected:", anomalous.len());
         for &(idx, score) in &anomalous {
             eprintln!("  session {idx}: anomaly_score={score:.3}");
@@ -229,11 +245,12 @@ fn cmd_infer(args: InferArgs) -> anyhow::Result<()> {
     }
 
     let emit_fmt = match args.emit {
-        EmitArg::Json  => EmitFormat::Json,
-        EmitArg::Dot   => EmitFormat::Dot,
-        EmitArg::Scapy => EmitFormat::Scapy,
-        EmitArg::Lua   => EmitFormat::Lua,
-        EmitArg::All   => EmitFormat::All,
+        EmitArg::Json   => EmitFormat::Json,
+        EmitArg::Dot    => EmitFormat::Dot,
+        EmitArg::Scapy  => EmitFormat::Scapy,
+        EmitArg::Lua    => EmitFormat::Lua,
+        EmitArg::Kaitai => EmitFormat::Kaitai,
+        EmitArg::All    => EmitFormat::All,
     };
 
     let input_name = args.input.file_name()
@@ -242,7 +259,7 @@ fn cmd_infer(args: InferArgs) -> anyhow::Result<()> {
 
     output::write_all(&args.output_dir, input_name, &schema, &fsm, emit_fmt, &scores)?;
 
-    eprintln!("ref2: done → {}", args.output_dir.display());
+    info!(q, "ref2: done → {}", args.output_dir.display());
     Ok(())
 }
 

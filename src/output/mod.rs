@@ -1,5 +1,6 @@
 pub mod dot;
 pub mod json_schema;
+pub mod kaitai;
 pub mod lua;
 pub mod scapy;
 
@@ -16,14 +17,16 @@ pub enum EmitFormat {
     Dot,
     Scapy,
     Lua,
+    Kaitai,
     All,
 }
 
 impl EmitFormat {
-    pub fn json (&self) -> bool { matches!(self, Self::Json  | Self::All) }
-    pub fn dot  (&self) -> bool { matches!(self, Self::Dot   | Self::All) }
-    pub fn scapy(&self) -> bool { matches!(self, Self::Scapy | Self::All) }
-    pub fn lua  (&self) -> bool { matches!(self, Self::Lua   | Self::All) }
+    pub fn json  (&self) -> bool { matches!(self, Self::Json   | Self::All) }
+    pub fn dot   (&self) -> bool { matches!(self, Self::Dot    | Self::All) }
+    pub fn scapy (&self) -> bool { matches!(self, Self::Scapy  | Self::All) }
+    pub fn lua   (&self) -> bool { matches!(self, Self::Lua    | Self::All) }
+    pub fn kaitai(&self) -> bool { matches!(self, Self::Kaitai | Self::All) }
 }
 
 /// Write all requested output files into `output_dir`.
@@ -70,6 +73,15 @@ pub fn write_all(
         lua::emit(&mut w, schema, input_name)?;
         eprintln!("ref2: wrote {}", path.display());
         eprintln!("ref2: install with: cp {} ~/.config/wireshark/plugins/", path.display());
+    }
+
+    if fmt.kaitai() {
+        let path = output_dir.join("schema.ksy");
+        let f = fs::File::create(&path)?;
+        let mut w = BufWriter::new(f);
+        kaitai::emit(&mut w, schema, input_name)?;
+        eprintln!("ref2: wrote {}", path.display());
+        eprintln!("ref2: compile with: kaitai-struct-compiler -t python {}", path.display());
     }
 
     Ok(())
