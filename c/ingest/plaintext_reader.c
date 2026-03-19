@@ -52,9 +52,35 @@ static long hex_decode(const char *src, uint8_t *dst, size_t dst_cap)
     return (long)out;
 }
 
-/* >80% printable → treat as ASCII, else hex. */
+/* Returns 1 if the string looks like space-separated hex bytes: "ff fe 06 ..."
+   i.e. all tokens are 1-2 hex digit groups. */
+static int is_hex_dump(const char *s, size_t len)
+{
+    if (len == 0) return 0;
+    size_t hex_tokens = 0, total_tokens = 0;
+    size_t i = 0;
+    while (i < len) {
+        while (i < len && (s[i] == ' ' || s[i] == ':' || s[i] == '\t')) i++;
+        if (i >= len) break;
+        size_t tok_start = i;
+        while (i < len && s[i] != ' ' && s[i] != ':' && s[i] != '\t') i++;
+        size_t tok_len = i - tok_start;
+        total_tokens++;
+        if (tok_len >= 1 && tok_len <= 2) {
+            int ok = 1;
+            for (size_t j = tok_start; j < tok_start + tok_len; j++)
+                if (hex_digit(s[j]) < 0) { ok = 0; break; }
+            if (ok) hex_tokens++;
+        }
+    }
+    /* ≥90% of tokens are valid hex pairs/nibbles → it's a hex dump */
+    return total_tokens >= 2 && hex_tokens * 10 >= total_tokens * 9;
+}
+
+/* >80% printable AND not a hex dump → treat as ASCII, else hex. */
 static int is_mostly_printable(const char *s, size_t len)
 {
+    if (is_hex_dump(s, len)) return 0;  /* hex dump: decode it */
     size_t print = 0;
     for (size_t i = 0; i < len; i++)
         if (isprint((unsigned char)s[i]) || s[i] == '\t') print++;
@@ -101,6 +127,8 @@ static void add_msg(session_t *sess, const uint8_t *data, size_t len,
 
 /* ── Format 1: direction-prefixed lines ──────────────────────────────────────── */
 
+/* parse_direction_prefixed now lives inside ingest_plaintext so it can
+   create multiple sessions on blank-line boundaries. stub kept for compat. */
 static int parse_direction_prefixed(FILE *f, session_t *sess)
 {
     char line[MAX_LINE];
@@ -108,7 +136,6 @@ static int parse_direction_prefixed(FILE *f, session_t *sess)
     uint32_t idx = 0;
 
     while (fgets(line, sizeof(line), f)) {
-        /* Strip trailing newline. */
         size_t ll = strlen(line);
         while (ll > 0 && (line[ll-1] == '\n' || line[ll-1] == '\r'))
             line[--ll] = '\0';
@@ -121,7 +148,7 @@ static int parse_direction_prefixed(FILE *f, session_t *sess)
         } else if (strncmp(line, "<< ", 3) == 0) {
             dir = 1; payload_str = line + 3;
         } else {
-            continue;  /* skip non-payload lines */
+            continue;
         }
 
         payload_str = strip_timestamp(payload_str);
@@ -260,6 +287,20 @@ static text_fmt_t detect_format(FILE *f)
 
 /* ── Public API ─────────────────────────────────────────────────────────────── */
 
+/* helper: grow trace->sessions by 1, init the new slot */
+static session_t *trace_new_session(trace_t *trace)
+{
+    session_t *sl = realloc(trace->sessions,
+                             (trace->count + 1) * sizeof(session_t));
+    if (!sl) return NULL;
+    trace->sessions = sl;
+    session_t *s = &trace->sessions[trace->count];
+    memset(s, 0, sizeof(*s));
+    s->session_id = (uint32_t)trace->count + 1;
+    trace->count++;
+    return s;
+}
+
 trace_t *ingest_plaintext(const char *path)
 {
     FILE *f = fopen(path, "r");
@@ -269,19 +310,71 @@ trace_t *ingest_plaintext(const char *path)
 
     trace_t *trace = malloc(sizeof(*trace));
     if (!trace) { fclose(f); return NULL; }
-    trace->count    = 1;
-    trace->sessions = calloc(1, sizeof(session_t));
-    if (!trace->sessions) { free(trace); fclose(f); return NULL; }
-    trace->sessions[0].session_id = 1;
+    trace->count    = 0;
+    trace->sessions = NULL;
 
-    int rc;
-    switch (fmt) {
-        case FMT_DIR_PREFIX: rc = parse_direction_prefixed(f, &trace->sessions[0]); break;
-        case FMT_WIRESHARK:  rc = parse_wireshark_hexdump (f, &trace->sessions[0]); break;
-        default:             rc = parse_plain_lines        (f, &trace->sessions[0]); break;
+    if (fmt == FMT_WIRESHARK || fmt == FMT_PLAIN) {
+        /* these don't have session-separating blank lines; single session */
+        session_t *s = trace_new_session(trace);
+        if (!s) { free(trace); fclose(f); return NULL; }
+        int rc = (fmt == FMT_WIRESHARK)
+                 ? parse_wireshark_hexdump(f, s)
+                 : parse_plain_lines(f, s);
+        fclose(f);
+        if (rc != 0 || trace->count == 0) { trace_free(trace); return NULL; }
+        return trace;
     }
-    fclose(f);
 
-    if (rc != 0) { trace_free(trace); return NULL; }
-    return trace;
+    /* Direction-prefixed format: split on blank lines into sessions. */
+    {
+        char line[MAX_LINE];
+        uint8_t buf[MAX_LINE];
+        uint32_t idx = 0;
+        session_t *cur = trace_new_session(trace);
+        if (!cur) { free(trace); fclose(f); return NULL; }
+
+        while (fgets(line, sizeof(line), f)) {
+            size_t ll = strlen(line);
+            while (ll > 0 && (line[ll-1] == '\n' || line[ll-1] == '\r'))
+                line[--ll] = '\0';
+
+            if (ll == 0) {
+                /* blank line = session boundary; only split if cur has msgs */
+                if (cur->count > 0) {
+                    cur = trace_new_session(trace);
+                    if (!cur) break;
+                }
+                continue;
+            }
+
+            uint8_t dir;
+            const char *payload_str;
+            if (strncmp(line, ">> ", 3) == 0) {
+                dir = 0; payload_str = line + 3;
+            } else if (strncmp(line, "<< ", 3) == 0) {
+                dir = 1; payload_str = line + 3;
+            } else {
+                continue;
+            }
+
+            payload_str = strip_timestamp(payload_str);
+            size_t plen = strlen(payload_str);
+
+            if (is_mostly_printable(payload_str, plen)) {
+                add_msg(cur, (const uint8_t *)payload_str, plen, dir, idx++);
+            } else {
+                long n = hex_decode(payload_str, buf, sizeof(buf));
+                if (n > 0)
+                    add_msg(cur, buf, (size_t)n, dir, idx++);
+            }
+        }
+        fclose(f);
+
+        /* drop any trailing empty session */
+        if (trace->count > 0 && trace->sessions[trace->count-1].count == 0)
+            trace->count--;
+
+        if (trace->count == 0) { trace_free(trace); return NULL; }
+        return trace;
+    }
 }

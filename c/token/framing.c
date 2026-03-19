@@ -148,13 +148,19 @@ static void detect_type_field(const session_t *sessions, size_t nsess,
                                size_t hdr_len, size_t len_offset, size_t len_width,
                                framing_info_t *out)
 {
-    if (hdr_len == 0) return;
+    /* Search a bit past the header too — type field is often right after the
+       length field (e.g. magic(2) + length(1) + opcode(1) pattern). */
+    size_t min_len = min_msg_len(sessions, nsess);
+    size_t search_limit = hdr_len + len_width + 4;
+    if (search_limit > MAX_HDR_PROBE) search_limit = MAX_HDR_PROBE;
+    if (search_limit > min_len) search_limit = min_len;
+    if (search_limit == 0) return;
 
     size_t best_pos   = 0;
     size_t best_count = 0;
     double best_score = -1.0;
 
-    for (size_t pos = 0; pos < hdr_len; pos++) {
+    for (size_t pos = 0; pos < search_limit; pos++) {
         /* Skip length field bytes. */
         if (out->has_length_field &&
             pos >= len_offset && pos < len_offset + len_width)
@@ -188,7 +194,7 @@ static void detect_type_field(const session_t *sessions, size_t nsess,
     }
 
     /* also try 2-byte windows (some protocols use u16 type fields) */
-    for (size_t pos = 0; pos + 1 < hdr_len; pos++) {
+    for (size_t pos = 0; pos + 1 < search_limit; pos++) {
         if (out->has_length_field &&
             pos >= len_offset && pos < len_offset + len_width)
             continue;
