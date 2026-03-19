@@ -119,6 +119,6 @@ fn field_ws_type(ft: FieldTypeId, len: usize) -> &'static str {
         Nonce         => "bytes",
         Str           => "stringz",
         Payload       => "bytes",
-        Opaque | _    => "bytes",
+        Opaque        => "bytes",
     }
 }
