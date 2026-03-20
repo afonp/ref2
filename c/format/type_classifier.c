@@ -87,26 +87,31 @@ static size_t count_distinct(token_t **msgs, size_t n, size_t off, size_t len,
 
 static int is_sequence_number(token_t **msgs, size_t n, size_t off, size_t len)
 {
-    if (n < 3 || len > 4) return 0;
-    /* Values should be strictly increasing (or at least non-decreasing)
-       across consecutive messages with the same session_id.
-       For simplicity: check that values are monotonically non-decreasing. */
-    uint32_t prev = 0;
-    int init = 0;
+    if (n < 3 || len > 2) return 0;
+
+    /* Collect distinct values (only for small ranges that suggest counters). */
+    uint8_t present[256] = {0};
+    uint32_t max_val = 0;
+    size_t valid = 0;
     for (size_t i = 0; i < n; i++) {
         if (msgs[i]->len < off + len) return 0;
         uint32_t v = 0;
         for (size_t b = 0; b < len; b++) v = (v << 8) | msgs[i]->data[off+b];
-        if (init && v < prev) return 0;
-        prev = v; init = 1;
+        if (v > 255) return 0;  /* values > 255 — not a typical seq counter */
+        present[v] = 1;
+        if (v > max_val) max_val = v;
+        valid++;
     }
-    /* At least some variation required. */
-    uint32_t first = 0, last = 0;
-    if (msgs[0]->len >= off + len)
-        for (size_t b = 0; b < len; b++) first = (first << 8) | msgs[0]->data[off+b];
-    if (msgs[n-1]->len >= off + len)
-        for (size_t b = 0; b < len; b++) last = (last << 8) | msgs[n-1]->data[off+b];
-    return last > first;
+    if (valid < 3 || max_val < 2) return 0;
+
+    /* Values must form a mostly-consecutive set covering ≥80% of [0, max_val].
+       This distinguishes a repeating 0..N counter (sequence number) from a
+       sparse enum or random variable field. */
+    size_t ndist = 0;
+    for (size_t i = 0; i <= max_val; i++)
+        if (present[i]) ndist++;
+
+    return ndist * 5 >= (max_val + 1) * 4;  /* ≥80% of range covered */
 }
 
 static int is_length_field(token_t **msgs, size_t n, size_t off, size_t len)
@@ -130,7 +135,14 @@ static int is_length_field(token_t **msgs, size_t n, size_t off, size_t len)
 
 static int is_nonce(token_t **msgs, size_t n, size_t off, size_t len)
 {
-    /* High entropy + no repetition across messages. */
+    /* High entropy + no repetition across messages.
+       Require ≥80% of messages to cover the full field; otherwise the field
+       is variable-length (NW-padded consensus) and should be PAYLOAD. */
+    size_t covered = 0;
+    for (size_t i = 0; i < n; i++)
+        if (msgs[i]->len >= off + len) covered++;
+    if (n > 0 && covered * 5 < n * 4) return 0;
+
     double H = field_entropy(msgs, n, off, len);
     if (H < 7.5) return 0;
 
@@ -300,7 +312,10 @@ protocol_schema_t *infer_format(token_stream_t **streams, size_t nstreams,
         free(conservation);
         if (!fields) continue;
 
-        /* Classify each field and compute entropy. */
+        /* Classify each field and compute entropy.
+           Once a PAYLOAD (variable-length tail) is emitted, stop — all subsequent
+           NW-padded segments are part of the same variable-length tail. */
+        size_t actual_nfields = 0;
         for (size_t fi = 0; fi < nfields; fi++) {
             field_t *f = &fields[fi];
             size_t   len = f->length ? f->length : 8;  /* variable: probe first 8 */
@@ -308,13 +323,30 @@ protocol_schema_t *infer_format(token_stream_t **streams, size_t nstreams,
             f->entropy = field_entropy(cluster_msgs[c], cluster_n[c],
                                         f->offset, len);
 
+            /* If fewer than 80% of messages cover the full NW-aligned field length,
+               the field is actually variable-length → mark as PAYLOAD and stop. */
+            if (f->length > 0) {
+                size_t covered = 0;
+                for (size_t m = 0; m < cluster_n[c]; m++)
+                    if (cluster_msgs[c][m]->len >= f->offset + f->length) covered++;
+                if (cluster_n[c] > 0 && covered * 5 < cluster_n[c] * 4) {
+                    f->type   = FIELD_PAYLOAD;
+                    f->length = 0;
+                    actual_nfields++;
+                    snprintf(f->name, sizeof(f->name), "field_%02zu_PAYLOAD",
+                             actual_nfields - 1);
+                    break;  /* stop: remainder is part of this variable tail */
+                }
+            }
+
             if (f->type == FIELD_OPAQUE || f->type == FIELD_CONSTANT) {
                 f->type = classify_field(cluster_msgs[c], cluster_n[c],
                                           f->offset, f->length ? f->length : len);
             }
 
+            actual_nfields++;
             snprintf(f->name, sizeof(f->name), "field_%02zu_%s",
-                     fi, field_type_name(f->type));
+                     actual_nfields - 1, field_type_name(f->type));
 
             /* Collect enum values. */
             if (f->type == FIELD_ENUM) {
@@ -326,7 +358,7 @@ protocol_schema_t *infer_format(token_stream_t **streams, size_t nstreams,
         }
 
         ps->schemas[c].fields      = fields;
-        ps->schemas[c].field_count = nfields;
+        ps->schemas[c].field_count = actual_nfields;
         free(cluster_msgs[c]);
     }
 

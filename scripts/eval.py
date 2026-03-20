@@ -54,14 +54,14 @@ def proto_simple_req_resp():
 
     def req(seq, payload=None):
         if payload is None:
-            payload = f"data{seq}".encode()
+            payload = os.urandom(random.randint(4, 24))
         total = 4 + len(payload)
-        return bytes([0xff, 0xfe, total, seq & 0xff]) + payload
+        return bytes([0xff, 0xfe, total & 0xff, seq & 0xff]) + payload
 
     def rsp(seq):
-        body = b"ok"
+        body = os.urandom(random.randint(2, 12))
         total = 4 + len(body)
-        return bytes([0xff, 0xfe, total, 0x00]) + body
+        return bytes([0xff, 0xfe, total & 0xff, 0x00]) + body
 
     def make_sessions(n):
         sessions = []
@@ -92,20 +92,20 @@ def proto_simple_req_resp():
 @proto("enum_flags_proto")
 def proto_enum_flags():
     """
-    de ad <u16be:len> <u8:opcode> <u8:flags> <payload>
+    de ad <u8:len> <u8:opcode> <u8:flags> <payload>
     opcodes: 0x01=HELLO, 0x02=DATA, 0x03=FIN
     flags:   bitmask (low entropy but not constant)
-    ground truth: magic(2), length(2), enum(1), opaque(1), payload(var)
+    ground truth: magic(2), length(1), enum(1), opaque(1), payload(var)
     """
     OPCODES = [0x01, 0x02, 0x03]
-    gt = [(0, 2, "MAGIC"), (2, 2, "LENGTH"), (4, 1, "ENUM"), (5, 1, "OPAQUE"), (6, 0, "PAYLOAD")]
+    gt = [(0, 2, "MAGIC"), (2, 1, "LENGTH"), (3, 1, "ENUM"), (4, 1, "OPAQUE"), (5, 0, "PAYLOAD")]
 
     def encode(opcode_idx, seq):
         opcode = OPCODES[opcode_idx % len(OPCODES)]
         flags  = random.randint(0, 7)
-        payload = os.urandom(random.randint(2, 16))
-        total = 6 + len(payload)
-        hdr = struct.pack(">HH", 0xdead, total) + bytes([opcode, flags])
+        payload = os.urandom(random.randint(2, 64))
+        total = 5 + len(payload)
+        hdr = struct.pack(">H", 0xdead) + bytes([total & 0xff, opcode, flags])
         return hdr + payload
 
     def make_sessions(n):
@@ -239,8 +239,7 @@ def run_ref2(ref2_bin, trace_path, output_dir):
          "--input",      str(trace_path),
          "--format",     "plaintext",
          "--output-dir", str(output_dir),
-         "--emit",       "json",
-         "--quiet"],
+         "--emit",       "json"],
         capture_output=True, text=True, timeout=60,
     )
     elapsed = time.monotonic() - t0

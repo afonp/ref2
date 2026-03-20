@@ -15,6 +15,7 @@ typedef struct {
     uint8_t *data;
     size_t   len;
     uint32_t type_hint;   /* discriminator value from type field; 0 = unknown */
+    uint8_t  direction;   /* 0 = client→server (>>), 1 = server→client (<<) */
 } token_t;
 
 typedef struct {

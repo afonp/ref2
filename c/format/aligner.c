@@ -10,6 +10,11 @@
 #include <string.h>
 #include <math.h>
 #include <float.h>
+#include <stdint.h>
+
+/* GAP sentinel — use 0x100 so it's outside the uint8_t range.
+   Previously used 0xff which collides with real protocol bytes. */
+#define NW_GAP ((uint16_t)0x100)
 
 /* ── NW scoring ─────────────────────────────────────────────────────────────── */
 
@@ -21,10 +26,11 @@
 #define MAX_NW_LEN  4096  /* don't NW-align messages longer than this */
 
 /* Compute alignment score between two byte sequences.
-   Returns score; optionally fills aligned_a / aligned_b (caller owns). */
+   Returns score; optionally fills aligned_a / aligned_b (caller owns).
+   Gap positions have value NW_GAP (0x100) — never a real byte. */
 static int nw_align(const uint8_t *a, size_t la,
                      const uint8_t *b, size_t lb,
-                     uint8_t **aligned_a_out, uint8_t **aligned_b_out,
+                     uint16_t **aligned_a_out, uint16_t **aligned_b_out,
                      size_t *aligned_len_out)
 {
     /* Clamp to avoid O(n²) blowup. */
@@ -54,10 +60,10 @@ static int nw_align(const uint8_t *a, size_t la,
     int score = dp[la * cols + lb];
 
     if (aligned_a_out && aligned_b_out && aligned_len_out) {
-        /* Traceback. */
+        /* Traceback — use uint16_t so NW_GAP (0x100) fits without collision. */
         size_t max_align = la + lb + 1;
-        uint8_t *ra = malloc(max_align);
-        uint8_t *rb = malloc(max_align);
+        uint16_t *ra = malloc(max_align * sizeof(uint16_t));
+        uint16_t *rb = malloc(max_align * sizeof(uint16_t));
         if (!ra || !rb) { free(ra); free(rb); free(dp); return score; }
 
         size_t i = la, j = lb, k = 0;
@@ -71,14 +77,14 @@ static int nw_align(const uint8_t *a, size_t la,
                 }
             }
             if (i > 0 && dp[i*cols+j] == dp[(i-1)*cols+j] + NW_GAP_EXT) {
-                ra[k] = a[i-1]; rb[k] = 0xff; k++; i--;
+                ra[k] = a[i-1]; rb[k] = NW_GAP; k++; i--;
             } else {
-                ra[k] = 0xff; rb[k] = b[j-1]; k++; j--;
+                ra[k] = NW_GAP; rb[k] = b[j-1]; k++; j--;
             }
         }
         /* Reverse. */
         for (size_t l = 0; l < k/2; l++) {
-            uint8_t tmp;
+            uint16_t tmp;
             tmp = ra[l]; ra[l] = ra[k-1-l]; ra[k-1-l] = tmp;
             tmp = rb[l]; rb[l] = rb[k-1-l]; rb[k-1-l] = tmp;
         }
@@ -188,8 +194,8 @@ double *align_cluster(token_t **msgs, size_t n, size_t *consensus_len_out)
 
     for (size_t idx = 1; idx < n; idx++) {
         token_t *tok = msgs[order[idx]];
-        uint8_t *al_a = NULL, *al_b = NULL;
-        size_t   al_len = 0;
+        uint16_t *al_a = NULL, *al_b = NULL;
+        size_t    al_len = 0;
 
         nw_align(consensus, cons_len, tok->data, tok->len,
                  &al_a, &al_b, &al_len);
@@ -209,13 +215,13 @@ double *align_cluster(token_t **msgs, size_t n, size_t *consensus_len_out)
 
         size_t old_pos = 0;
         for (size_t p = 0; p < al_len; p++) {
-            if (al_a[p] != 0xff) {
+            if (al_a[p] != NW_GAP) {
                 /* Position existed in old consensus. */
-                new_cons[p] = al_a[p];
+                new_cons[p] = (uint8_t)al_a[p];
                 new_cnt[p]  = (old_pos < cons_len) ? match_cnt[old_pos] : 1;
                 old_pos++;
             }
-            if (al_b[p] != 0xff) {
+            if (al_b[p] != NW_GAP) {
                 /* Current message agrees at this position. */
                 if (al_a[p] == al_b[p])
                     new_cnt[p]++;
@@ -272,26 +278,65 @@ static double *median_smooth(const double *in, size_t n)
     return out;
 }
 
+/* Returns 1 if byte at position pos is part of a known framing field that
+   should always be treated as variable (e.g. length field), regardless of
+   how conserved it appears in the corpus. */
+static int is_forced_variable(const framing_info_t *framing, size_t pos)
+{
+    if (!framing) return 0;
+    if (framing->has_length_field &&
+        pos >= framing->length_offset &&
+        pos < framing->length_offset + framing->length_width)
+        return 1;
+    return 0;
+}
+
+/* Returns 1 if position pos is a forced segment boundary (start/end of a known
+   framing field: length field or type discriminator field). */
+static int is_forced_boundary(const framing_info_t *framing, size_t pos)
+{
+    if (!framing) return 0;
+    if (framing->has_length_field) {
+        if (pos == framing->length_offset) return 1;
+        if (pos == framing->length_offset + framing->length_width) return 1;
+    }
+    if (framing->has_type_field) {
+        if (pos == framing->type_offset) return 1;
+        if (pos == framing->type_offset + framing->type_width) return 1;
+    }
+    return 0;
+}
+
 field_t *segment_fields(const double *conservation, size_t len,
                          const framing_info_t *framing,
                          size_t *field_count_out)
 {
     if (len == 0) { *field_count_out = 0; return NULL; }
 
-    double *smooth = median_smooth(conservation, len);
-    if (!smooth) return NULL;
-
-    /* Run-length encode into conserved / variable segments. */
+    /* Run-length encode conservation scores into conserved/variable runs.
+       Known framing fields (e.g. length field) are:
+       - forced variable (even if their bytes appear conserved in small corpus)
+       - forced to be isolated segments via forced boundary positions */
     field_t *fields = malloc(len * sizeof(field_t));  /* worst case: 1 per byte */
-    if (!fields) { free(smooth); return NULL; }
+    if (!fields) return NULL;
     size_t nfields = 0;
 
     size_t start = 0;
-    int    conserved = smooth[0] >= CONSERVED_THRESH;
+    int    conserved = (conservation[0] >= CONSERVED_THRESH) &&
+                       !is_forced_variable(framing, 0);
 
     for (size_t i = 1; i <= len; i++) {
-        int now = (i < len) ? (smooth[i] >= CONSERVED_THRESH) : !conserved;
-        if (now != conserved) {
+        int now;
+        if (i < len)
+            now = (conservation[i] >= CONSERVED_THRESH) &&
+                  !is_forced_variable(framing, i);
+        else
+            now = !conserved;
+
+        /* Force a segment break at known framing field boundaries. */
+        int force_break = is_forced_boundary(framing, i) && i > start;
+
+        if (now != conserved || force_break) {
             field_t *f = &fields[nfields++];
             f->offset     = start;
             f->length     = i - start;
@@ -310,11 +355,14 @@ field_t *segment_fields(const double *conservation, size_t len,
             }
 
             start     = i;
-            conserved = now;
+            /* After a forced break, re-evaluate the conserved state at new start. */
+            if (force_break && i < len)
+                conserved = (conservation[i] >= CONSERVED_THRESH) &&
+                            !is_forced_variable(framing, i);
+            else
+                conserved = now;
         }
     }
-
-    free(smooth);
 
     *field_count_out = nfields;
     return fields;

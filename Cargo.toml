@@ -17,6 +17,10 @@ anyhow      = "1"
 [dev-dependencies]
 tempfile    = "3"
 
+[[test]]
+name = "toy_protocol"
+path = "tests/integration/toy_protocol.rs"
+
 [build-dependencies]
 cmake = "0.1"
 

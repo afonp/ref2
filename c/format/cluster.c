@@ -148,18 +148,28 @@ uint32_t *cluster_messages(token_stream_t **streams, size_t nstreams,
     uint32_t *labels = malloc(total * sizeof(uint32_t));
     if (!labels) { free(flat); return NULL; }
 
-    /* Fast path: use type_hint if available on all tokens. */
+    /* Check if direction information is available (any non-zero direction). */
+    int has_direction = 0;
+    for (size_t i = 0; i < total; i++)
+        if (flat[i]->direction != 0) { has_direction = 1; break; }
+
+    /* Determine primary clustering key:
+       - all_typed: every token has a non-zero type_hint → use type_hint alone.
+         The type discriminator field is authoritative; direction is secondary.
+       - !all_typed && has_direction: type_hint is unreliable (some tokens
+         have hint=0), but direction is known → split by direction only.
+       - otherwise: fall through to k-means. */
     int all_typed = 1;
     for (size_t i = 0; i < total; i++)
         if (flat[i]->type_hint == 0) { all_typed = 0; break; }
 
     if (all_typed) {
-        /* Remap type hints to dense cluster IDs. */
-        uint32_t map[256] = {0};
-        uint8_t  seen[256] = {0};
+        /* Remap type_hints to dense cluster IDs. */
+        uint32_t map[65536] = {0};
+        uint8_t  seen[65536] = {0};
         int      k = 0;
         for (size_t i = 0; i < total; i++) {
-            uint8_t h = (uint8_t)(flat[i]->type_hint & 0xff);
+            uint32_t h = flat[i]->type_hint & 0xffff;
             if (!seen[h]) { seen[h] = 1; map[h] = (uint32_t)k++; }
             labels[i] = map[h];
         }
@@ -168,9 +178,18 @@ uint32_t *cluster_messages(token_stream_t **streams, size_t nstreams,
         return labels;
     }
 
-    /* k-means fallback. */
-    int k = (int)sqrt((double)total / 2.0);
-    if (k < 1)  k = 1;
+    if (has_direction) {
+        /* Split only by direction (2 clusters: client→server, server→client). */
+        for (size_t i = 0; i < total; i++)
+            labels[i] = flat[i]->direction ? 1 : 0;
+        *k_out = 2;
+        free(flat);
+        return labels;
+    }
+
+    /* k-means fallback: use sqrt heuristic but cap at a reasonable value. */
+    int k = (int)sqrt((double)total / 4.0);
+    if (k < 2)  k = 2;
     if (k > MAX_K) k = MAX_K;
 
     double (*hists)[256] = malloc(total * sizeof(*hists));

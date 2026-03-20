@@ -309,7 +309,8 @@ token_stream_t *tokenize_session(const session_t *session,
             return NULL;
         }
         memcpy(tok->data, m->payload, m->payload_len);
-        tok->len = m->payload_len;
+        tok->len       = m->payload_len;
+        tok->direction = m->direction;
 
         /* Extract type hint. */
         tok->type_hint = 0;
