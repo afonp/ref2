@@ -111,7 +111,17 @@ static int is_sequence_number(token_t **msgs, size_t n, size_t off, size_t len)
     for (size_t i = 0; i <= max_val; i++)
         if (present[i]) ndist++;
 
-    return ndist * 5 >= (max_val + 1) * 4;  /* ≥80% of range covered */
+    if (ndist * 5 < (max_val + 1) * 4) return 0;  /* not dense enough */
+
+    /* Reject if max_val+1 is a power of 2 (e.g. 1,3,7,15,31,63,127,255).
+       Bit-flag fields (2-bit, 3-bit masks) also produce exactly-full consecutive
+       ranges like {0..3} or {0..7}, which are indistinguishable from counters
+       without session context.  Require max_val >= 12 OR non-power-of-2 range. */
+    uint32_t m = max_val + 1;
+    int is_pow2_range = (m > 0) && ((m & (m - 1)) == 0);
+    if (is_pow2_range && max_val < 12) return 0;
+
+    return 1;
 }
 
 static int is_length_field(token_t **msgs, size_t n, size_t off, size_t len)
@@ -312,10 +322,12 @@ protocol_schema_t *infer_format(token_stream_t **streams, size_t nstreams,
         free(conservation);
         if (!fields) continue;
 
+
         /* Classify each field and compute entropy.
            Once a PAYLOAD (variable-length tail) is emitted, stop — all subsequent
            NW-padded segments are part of the same variable-length tail. */
         size_t actual_nfields = 0;
+        int seen_variable = 0;  /* set once we've emitted any variable/non-constant field */
         for (size_t fi = 0; fi < nfields; fi++) {
             field_t *f = &fields[fi];
             size_t   len = f->length ? f->length : 8;  /* variable: probe first 8 */
@@ -323,20 +335,66 @@ protocol_schema_t *infer_format(token_stream_t **streams, size_t nstreams,
             f->entropy = field_entropy(cluster_msgs[c], cluster_n[c],
                                         f->offset, len);
 
-            /* If fewer than 80% of messages cover the full NW-aligned field length,
-               the field is actually variable-length → mark as PAYLOAD and stop. */
-            if (f->length > 0) {
-                size_t covered = 0;
-                for (size_t m = 0; m < cluster_n[c]; m++)
-                    if (cluster_msgs[c][m]->len >= f->offset + f->length) covered++;
-                if (cluster_n[c] > 0 && covered * 5 < cluster_n[c] * 4) {
+            /* For OPAQUE segments of length > 1, scan raw message bytes to find
+               the payload boundary.  A position is a "structured header byte" if:
+               (a) ≥80% of cluster messages have data at that raw byte position, AND
+               (b) it has ≤16 distinct byte values (structured fields have a bounded
+                   value space; random bytes across n≥30 messages yield 20+ distinct
+                   values, well above this threshold).
+               We scan raw bytes rather than using the NW conservation vector because
+               progressive NW alignment shifts consensus positions, making
+               conservation[pos] unreliable as a proxy for protocol byte position.
+               Only emit payload_after when the scan finds a boundary before the end
+               of the field (split < f->length); if the entire field is structured
+               we leave it alone. */
+            int emit_payload_after = 0;
+            if (f->type == FIELD_OPAQUE && f->length > 1) {
+                size_t split = 0;
+                int payload_starts_here = 0;
+                for (size_t p = 0; p < f->length; p++) {
+                    size_t pos = f->offset + p;
+
+                    /* Count messages with data at this position and collect distinct
+                       byte values simultaneously. */
+                    uint8_t seen_vals[32]; size_t nseen = 0;
+                    size_t present = 0;
+                    for (size_t m = 0; m < cluster_n[c]; m++) {
+                        if (cluster_msgs[c][m]->len <= pos) continue;
+                        present++;
+                        uint8_t v = cluster_msgs[c][m]->data[pos];
+                        int found = 0;
+                        for (size_t j = 0; j < nseen; j++)
+                            if (seen_vals[j] == v) { found = 1; break; }
+                        if (!found) {
+                            if (nseen < 32) seen_vals[nseen++] = v;
+                            else { nseen = 33; break; }
+                        }
+                    }
+                    /* Low coverage → entered the variable payload. */
+                    if (cluster_n[c] > 0 && present * 5 < cluster_n[c] * 4) {
+                        payload_starts_here = 1; break;
+                    }
+                    /* Too many distinct values → high-entropy / payload data. */
+                    if (nseen > 16) { payload_starts_here = 1; break; }
+                    split = p + 1;
+                }
+
+                if (payload_starts_here && split == 0) {
+                    /* No structured prefix — entire segment is payload. */
                     f->type   = FIELD_PAYLOAD;
                     f->length = 0;
                     actual_nfields++;
                     snprintf(f->name, sizeof(f->name), "field_%02zu_PAYLOAD",
                              actual_nfields - 1);
-                    break;  /* stop: remainder is part of this variable tail */
+                    break;
+                } else if (payload_starts_here && split < f->length) {
+                    /* Trim to the structured prefix; emit PAYLOAD right after. */
+                    f->length = split;
+                    f->entropy = field_entropy(cluster_msgs[c], cluster_n[c],
+                                               f->offset, split);
+                    emit_payload_after = 1;
                 }
+                /* split == f->length: whole field is structured — no split needed. */
             }
 
             if (f->type == FIELD_OPAQUE || f->type == FIELD_CONSTANT) {
@@ -344,16 +402,76 @@ protocol_schema_t *infer_format(token_stream_t **streams, size_t nstreams,
                                           f->offset, f->length ? f->length : len);
             }
 
+            /* Spurious-field guard: once we've seen any variable/non-constant field,
+               an OPAQUE field with high entropy at its first byte is random payload
+               data (e.g., a NW-artifact CONSTANT that classify_field demoted to OPAQUE)
+               rather than a legitimate structured header field.  Emit PAYLOAD and stop. */
+            if (seen_variable && f->type == FIELD_OPAQUE && f->length > 0
+                    && cluster_n[c] > 0) {
+                uint8_t sbuf[32]; size_t nsbuf = 0;
+                for (size_t m = 0; m < cluster_n[c]; m++) {
+                    if (cluster_msgs[c][m]->len <= f->offset) continue;
+                    uint8_t v = cluster_msgs[c][m]->data[f->offset];
+                    int found = 0;
+                    for (size_t j = 0; j < nsbuf; j++)
+                        if (sbuf[j] == v) { found = 1; break; }
+                    if (!found) {
+                        if (nsbuf < 32) sbuf[nsbuf++] = v;
+                        else { nsbuf = 33; break; }
+                    }
+                }
+                if (nsbuf > 16) {
+                    f->length     = 0;
+                    f->type       = FIELD_PAYLOAD;
+                    f->entropy    = 0.0;
+                    f->enum_count = 0;
+                    actual_nfields++;
+                    snprintf(f->name, sizeof(f->name), "field_%02zu_PAYLOAD",
+                             actual_nfields - 1);
+                    break;
+                }
+            }
+
             actual_nfields++;
             snprintf(f->name, sizeof(f->name), "field_%02zu_%s",
                      actual_nfields - 1, field_type_name(f->type));
 
-            /* Collect enum values. */
+            /* Collect enum values; also store constant value so the cross-cluster
+               ENUM detection pass can read it from CONSTANT/MAGIC fields. */
             if (f->type == FIELD_ENUM) {
                 f->enum_count = count_distinct(cluster_msgs[c], cluster_n[c],
                                                f->offset, f->length,
                                                f->enum_values);
                 if (f->enum_count > 16) f->enum_count = 16;
+            } else if ((f->type == FIELD_CONSTANT || f->type == FIELD_MAGIC) &&
+                       f->length > 0 && f->length <= 4 && cluster_n[c] > 0 &&
+                       cluster_msgs[c][0]->len >= f->offset + f->length) {
+                uint32_t v = 0;
+                for (size_t b = 0; b < f->length; b++)
+                    v = (v << 8) | cluster_msgs[c][0]->data[f->offset + b];
+                f->enum_values[0] = v;
+                f->enum_count = 1;
+            }
+
+            /* Update seen_variable: set once we've emitted any non-constant field
+               (OPAQUE, ENUM, LENGTH, SEQ, NONCE, STRING, PAYLOAD).  MAGIC and
+               CONSTANT fields are "fixed header" and don't count. */
+            if (f->type != FIELD_MAGIC && f->type != FIELD_CONSTANT)
+                seen_variable = 1;
+
+            if (emit_payload_after) {
+                /* Append a synthetic PAYLOAD field for the variable-length tail.
+                   Safe: fields was allocated with (cons_len+1) slots. */
+                field_t *pf = &fields[actual_nfields];
+                pf->offset     = f->offset + f->length;
+                pf->length     = 0;
+                pf->type       = FIELD_PAYLOAD;
+                pf->entropy    = 0.0;
+                pf->enum_count = 0;
+                actual_nfields++;
+                snprintf(pf->name, sizeof(pf->name), "field_%02zu_PAYLOAD",
+                         actual_nfields - 1);
+                break;
             }
         }
 
@@ -365,6 +483,59 @@ protocol_schema_t *infer_format(token_stream_t **streams, size_t nstreams,
     free(cluster_msgs);
     free(cluster_n);
     free(cluster_cap);
+
+    /* Cross-cluster ENUM detection: if multiple clusters each have a CONSTANT
+       field at the same (offset, length) but with different stored values,
+       reclassify all of them as ENUM.  This catches the common pattern where
+       each cluster is keyed by an opcode that is constant within the cluster
+       but varies across clusters. */
+    if (ps->schema_count >= 2) {
+        /* Collect (offset, length) pairs that appear as CONSTANT/MAGIC in
+           at least 2 clusters and have ≥ 2 distinct values. */
+        for (size_t c0 = 0; c0 < ps->schema_count; c0++) {
+            for (size_t fi = 0; fi < ps->schemas[c0].field_count; fi++) {
+                field_t *f0 = &ps->schemas[c0].fields[fi];
+                if (f0->type != FIELD_CONSTANT && f0->type != FIELD_MAGIC) continue;
+                if (f0->length == 0 || f0->length > 4) continue;
+                if (f0->enum_count != 1) continue;  /* need stored constant value */
+
+                /* Gather distinct values at this (offset, length) across clusters. */
+                uint32_t vals[32];
+                size_t   nvals = 0;
+
+                for (size_t c1 = 0; c1 < ps->schema_count; c1++) {
+                    for (size_t fj = 0; fj < ps->schemas[c1].field_count; fj++) {
+                        field_t *f1 = &ps->schemas[c1].fields[fj];
+                        if (f1->offset != f0->offset || f1->length != f0->length) continue;
+                        if (f1->type != FIELD_CONSTANT && f1->type != FIELD_MAGIC) continue;
+                        if (f1->enum_count < 1) continue;
+                        uint32_t val = f1->enum_values[0];
+                        int dup = 0;
+                        for (size_t u = 0; u < nvals; u++)
+                            if (vals[u] == val) { dup = 1; break; }
+                        if (!dup && nvals < 32) vals[nvals++] = val;
+                    }
+                }
+
+                /* Need 2–16 distinct values; otherwise skip. */
+                if (nvals < 2 || nvals > 16) continue;
+
+                /* Reclassify all matching fields in all clusters as ENUM. */
+                for (size_t c1 = 0; c1 < ps->schema_count; c1++) {
+                    for (size_t fj = 0; fj < ps->schemas[c1].field_count; fj++) {
+                        field_t *f1 = &ps->schemas[c1].fields[fj];
+                        if (f1->offset != f0->offset || f1->length != f0->length) continue;
+                        if (f1->type != FIELD_CONSTANT && f1->type != FIELD_MAGIC) continue;
+                        f1->type = FIELD_ENUM;
+                        f1->enum_count = nvals;
+                        for (size_t v = 0; v < nvals; v++)
+                            f1->enum_values[v] = vals[v];
+                        snprintf(f1->name, sizeof(f1->name), "field_%02zu_ENUM", fj);
+                    }
+                }
+            }
+        }
+    }
 
     return ps;
 }

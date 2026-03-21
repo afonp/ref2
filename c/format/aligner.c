@@ -317,7 +317,7 @@ field_t *segment_fields(const double *conservation, size_t len,
        Known framing fields (e.g. length field) are:
        - forced variable (even if their bytes appear conserved in small corpus)
        - forced to be isolated segments via forced boundary positions */
-    field_t *fields = malloc(len * sizeof(field_t));  /* worst case: 1 per byte */
+    field_t *fields = malloc((len + 1) * sizeof(field_t));  /* +1 for payload split */
     if (!fields) return NULL;
     size_t nfields = 0;
 
