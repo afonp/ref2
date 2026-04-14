@@ -22,8 +22,6 @@
 
 #define MAX_LINE  65536
 
-/* ── Utility ─────────────────────────────────────────────────────────────────── */
-
 static int hex_digit(char c)
 {
     if (c >= '0' && c <= '9') return c - '0';
@@ -125,8 +123,6 @@ static void add_msg(session_t *sess, const uint8_t *data, size_t len,
     msg->session_id   = sess->session_id;
 }
 
-/* ── Format 1: direction-prefixed lines ──────────────────────────────────────── */
-
 /* parse_direction_prefixed now lives inside ingest_plaintext so it can
    create multiple sessions on blank-line boundaries. stub kept for compat. */
 static int parse_direction_prefixed(FILE *f, session_t *sess)
@@ -164,8 +160,6 @@ static int parse_direction_prefixed(FILE *f, session_t *sess)
     }
     return sess->count > 0 ? 0 : -1;
 }
-
-/* ── Format 2: Wireshark hex dump ───────────────────────────────────────────── */
 
 /*
  * Wireshark "Follow Stream" hex view lines look like:
@@ -228,8 +222,6 @@ static int parse_wireshark_hexdump(FILE *f, session_t *sess)
     return seen_any ? 0 : -1;
 }
 
-/* ── Format 3: plain lines ───────────────────────────────────────────────────── */
-
 static int parse_plain_lines(FILE *f, session_t *sess)
 {
     char line[MAX_LINE];
@@ -255,8 +247,6 @@ static int parse_plain_lines(FILE *f, session_t *sess)
     }
     return sess->count > 0 ? 0 : -1;
 }
-
-/* ── Auto-detect format ──────────────────────────────────────────────────────── */
 
 typedef enum { FMT_UNKNOWN, FMT_DIR_PREFIX, FMT_WIRESHARK, FMT_PLAIN } text_fmt_t;
 
@@ -284,8 +274,6 @@ static text_fmt_t detect_format(FILE *f)
     if (wireshark_hits  > 0) return FMT_WIRESHARK;
     return FMT_PLAIN;
 }
-
-/* ── Public API ─────────────────────────────────────────────────────────────── */
 
 /* helper: grow trace->sessions by 1, init the new slot */
 static session_t *trace_new_session(trace_t *trace)

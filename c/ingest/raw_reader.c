@@ -12,8 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ── Helpers ────────────────────────────────────────────────────────────────── */
-
 static uint32_t read_uint(const uint8_t *buf, size_t width, int big_endian)
 {
     uint32_t v = 0;
@@ -47,8 +45,6 @@ static int session_add_msg(session_t *sess, const uint8_t *data, size_t len,
     msg->session_id   = sess->session_id;
     return 0;
 }
-
-/* ── Framing strategies ──────────────────────────────────────────────────────── */
 
 static int frame_fixed_header(session_t *sess,
                                const uint8_t *buf, size_t buf_len,
@@ -119,8 +115,6 @@ static int frame_delimiter(session_t *sess,
         session_add_msg(sess, buf + start, buf_len - start, 0, 0);
     return 0;
 }
-
-/* ── Public API ─────────────────────────────────────────────────────────────── */
 
 trace_t *ingest_raw(const char *path, const frame_hint_t *hint)
 {

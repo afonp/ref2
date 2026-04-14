@@ -1,14 +1,13 @@
 #ifndef REF2_INGEST_H
 #define REF2_INGEST_H
 
+#include <sys/types.h>
 #include <stdint.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* ── Source type ────────────────────────────────────────────────────────────── */
 
 typedef enum {
     SOURCE_PCAP      = 0,
@@ -17,7 +16,6 @@ typedef enum {
     SOURCE_SYSCALL   = 3,
 } source_t;
 
-/* ── Core data types ────────────────────────────────────────────────────────── */
 
 typedef struct {
     uint64_t  timestamp_us;
@@ -38,8 +36,6 @@ typedef struct {
     session_t *sessions;
     size_t     count;
 } trace_t;
-
-/* ── Frame hint (raw ingestion) ─────────────────────────────────────────────── */
 
 typedef enum {
     FRAME_FIXED_HEADER,

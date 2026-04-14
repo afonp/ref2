@@ -16,8 +16,6 @@
 #define TYPE_MIN_VALS   2
 #define TYPE_MAX_VALS   16
 
-/* ── Entropy helpers ────────────────────────────────────────────────────────── */
-
 /* Shannon entropy of a byte position across all messages (in bits). */
 static double position_entropy(const session_t *sessions, size_t nsess,
                                 size_t pos)
@@ -58,8 +56,6 @@ static size_t min_msg_len(const session_t *sessions, size_t nsess)
     return mn == SIZE_MAX ? 0 : mn;
 }
 
-/* ── Header length inference ────────────────────────────────────────────────── */
-
 static size_t infer_header_len(const session_t *sessions, size_t nsess)
 {
     size_t limit = min_msg_len(sessions, nsess);
@@ -75,8 +71,6 @@ static size_t infer_header_len(const session_t *sessions, size_t nsess)
     }
     return hdr;
 }
-
-/* ── Delimiter detection ────────────────────────────────────────────────────── */
 
 typedef struct {
     uint8_t bytes[4];
@@ -141,8 +135,6 @@ static int detect_delimiter(const session_t *sessions, size_t nsess,
 
     return 0;
 }
-
-/* ── Type-discriminator detection ───────────────────────────────────────────── */
 
 static void detect_type_field(const session_t *sessions, size_t nsess,
                                size_t hdr_len, size_t len_offset, size_t len_width,
@@ -245,8 +237,6 @@ static void detect_type_field(const session_t *sessions, size_t nsess,
     }
 }
 
-/* ── Public API ─────────────────────────────────────────────────────────────── */
-
 framing_info_t *detect_framing(const session_t *sessions, size_t nsess)
 {
     framing_info_t *fi = calloc(1, sizeof(*fi));
@@ -274,8 +264,6 @@ framing_info_t *detect_framing(const session_t *sessions, size_t nsess)
     return fi;
 }
 
-/* ── Tokenisation ────────────────────────────────────────────────────────────── */
-
 static uint32_t read_uint_fi(const uint8_t *buf, size_t width, int big_endian)
 {
     uint32_t v = 0;
@@ -301,14 +289,8 @@ token_stream_t *tokenize_session(const session_t *session,
         const message_t *m = &session->messages[i];
         token_t *tok = &ts->tokens[i];
 
-        tok->data = malloc(m->payload_len);
-        if (!tok->data) {
-            /* Free what we've allocated so far. */
-            for (size_t j = 0; j < i; j++) free(ts->tokens[j].data);
-            free(ts->tokens); free(ts);
-            return NULL;
-        }
-        memcpy(tok->data, m->payload, m->payload_len);
+        /* Zero-copy token view into trace-owned payload bytes. */
+        tok->data = m->payload;
         tok->len       = m->payload_len;
         tok->direction = m->direction;
 
@@ -349,8 +331,14 @@ token_stream_t **tokenize_trace(const trace_t *trace,
     token_stream_t **streams = malloc(trace->count * sizeof(token_stream_t *));
     if (!streams) return NULL;
 
-    for (size_t i = 0; i < trace->count; i++)
+    for (size_t i = 0; i < trace->count; i++) {
         streams[i] = tokenize_session(&trace->sessions[i], fi);
+        if (!streams[i]) {
+            for (size_t j = 0; j < i; j++) token_stream_free(streams[j]);
+            free(streams);
+            return NULL;
+        }
+    }
 
     return streams;
 }
@@ -358,8 +346,6 @@ token_stream_t **tokenize_trace(const trace_t *trace,
 void token_stream_free(token_stream_t *ts)
 {
     if (!ts) return;
-    for (size_t i = 0; i < ts->count; i++)
-        free(ts->tokens[i].data);
     free(ts->tokens);
     free(ts);
 }

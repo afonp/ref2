@@ -301,8 +301,15 @@ protocol_schema_t *infer_format(token_stream_t **streams, size_t nstreams,
             if (cl >= (uint32_t)k) continue;
             if (cluster_n[cl] >= cluster_cap[cl]) {
                 cluster_cap[cl] = cluster_cap[cl] ? cluster_cap[cl] * 2 : 16;
-                cluster_msgs[cl] = realloc(cluster_msgs[cl],
-                                            cluster_cap[cl] * sizeof(token_t *));
+                token_t **grown = realloc(cluster_msgs[cl],
+                                          cluster_cap[cl] * sizeof(token_t *));
+                if (!grown) {
+                    for (int cc = 0; cc < k; cc++) free(cluster_msgs[cc]);
+                    free(cluster_msgs); free(cluster_n); free(cluster_cap);
+                    protocol_schema_free(ps);
+                    return NULL;
+                }
+                cluster_msgs[cl] = grown;
             }
             cluster_msgs[cl][cluster_n[cl]++] = &streams[si]->tokens[mi];
         }

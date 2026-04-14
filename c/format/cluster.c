@@ -41,7 +41,7 @@ static double dist2(const double *a, const double *b)
 
 /* ── k-means++ clustering ────────────────────────────────────────────────────── */
 
-static double kmeans_run(double (*hists)[256], size_t n, int k,
+static double kmeans_run(token_t **flat, size_t n, int k,
                           uint32_t *labels_out)
 {
     /* Allocate centroids. */
@@ -53,19 +53,22 @@ static double kmeans_run(double (*hists)[256], size_t n, int k,
         free(centroids); free(new_c); free(cnt); free(labels);
         return DBL_MAX;
     }
+    for (size_t i = 0; i < n; i++) labels[i] = UINT32_MAX;
 
     /* k-means++ initialisation. */
     size_t first = (size_t)rand() % n;
-    memcpy(centroids[0], hists[first], 256 * sizeof(double));
+    make_hist(flat[first], centroids[0]);
 
     for (int c = 1; c < k; c++) {
         double *dists = malloc(n * sizeof(double));
         if (!dists) break;
         double total = 0.0;
         for (size_t i = 0; i < n; i++) {
+            double hist[256];
             double mn = DBL_MAX;
+            make_hist(flat[i], hist);
             for (int j = 0; j < c; j++) {
-                double d = dist2(hists[i], centroids[j]);
+                double d = dist2(hist, centroids[j]);
                 if (d < mn) mn = d;
             }
             dists[i] = mn;
@@ -78,7 +81,7 @@ static double kmeans_run(double (*hists)[256], size_t n, int k,
             r -= dists[i];
             if (r <= 0.0) { chosen = i; break; }
         }
-        memcpy(centroids[c], hists[chosen], 256 * sizeof(double));
+        make_hist(flat[chosen], centroids[c]);
         free(dists);
     }
 
@@ -87,10 +90,12 @@ static double kmeans_run(double (*hists)[256], size_t n, int k,
         /* Assignment. */
         int changed = 0;
         for (size_t i = 0; i < n; i++) {
+            double hist[256];
             double best_d = DBL_MAX;
             uint32_t best_c = 0;
+            make_hist(flat[i], hist);
             for (int c = 0; c < k; c++) {
-                double d = dist2(hists[i], centroids[c]);
+                double d = dist2(hist, centroids[c]);
                 if (d < best_d) { best_d = d; best_c = (uint32_t)c; }
             }
             if (labels[i] != best_c) changed++;
@@ -102,8 +107,10 @@ static double kmeans_run(double (*hists)[256], size_t n, int k,
         memset(new_c, 0, (size_t)k * sizeof(*new_c));
         memset(cnt,   0, (size_t)k * sizeof(size_t));
         for (size_t i = 0; i < n; i++) {
+            double hist[256];
             uint32_t c = labels[i];
-            for (int b = 0; b < 256; b++) new_c[c][b] += hists[i][b];
+            make_hist(flat[i], hist);
+            for (int b = 0; b < 256; b++) new_c[c][b] += hist[b];
             cnt[c]++;
         }
         for (int c = 0; c < k; c++) {
@@ -115,8 +122,11 @@ static double kmeans_run(double (*hists)[256], size_t n, int k,
 
     /* Compute inertia. */
     double inertia = 0.0;
-    for (size_t i = 0; i < n; i++)
-        inertia += dist2(hists[i], centroids[labels[i]]);
+    for (size_t i = 0; i < n; i++) {
+        double hist[256];
+        make_hist(flat[i], hist);
+        inertia += dist2(hist, centroids[labels[i]]);
+    }
 
     memcpy(labels_out, labels, n * sizeof(uint32_t));
 
@@ -192,24 +202,19 @@ uint32_t *cluster_messages(token_stream_t **streams, size_t nstreams,
     if (k < 2)  k = 2;
     if (k > MAX_K) k = MAX_K;
 
-    double (*hists)[256] = malloc(total * sizeof(*hists));
-    if (!hists) { free(flat); free(labels); return NULL; }
-    for (size_t i = 0; i < total; i++) make_hist(flat[i], hists[i]);
-    free(flat);
-
     double best_inertia = DBL_MAX;
     uint32_t *best_labels = malloc(total * sizeof(uint32_t));
-    if (!best_labels) { free(hists); free(labels); return NULL; }
+    if (!best_labels) { free(flat); free(labels); return NULL; }
 
     for (int r = 0; r < KMEANS_RESTARTS; r++) {
-        double inertia = kmeans_run(hists, total, k, labels);
+        double inertia = kmeans_run(flat, total, k, labels);
         if (inertia < best_inertia) {
             best_inertia = inertia;
             memcpy(best_labels, labels, total * sizeof(uint32_t));
         }
     }
 
-    free(hists);
+    free(flat);
     free(labels);
 
     *k_out = k;

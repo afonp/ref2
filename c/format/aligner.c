@@ -76,10 +76,14 @@ static int nw_align(const uint8_t *a, size_t la,
                     continue;
                 }
             }
-            if (i > 0 && dp[i*cols+j] == dp[(i-1)*cols+j] + NW_GAP_EXT) {
+            if (i > 0 &&
+                (j == 0 || dp[i*cols+j] == dp[(i-1)*cols+j] + NW_GAP_EXT)) {
                 ra[k] = a[i-1]; rb[k] = NW_GAP; k++; i--;
-            } else {
+            } else if (j > 0) {
                 ra[k] = NW_GAP; rb[k] = b[j-1]; k++; j--;
+            } else {
+                /* Both fallback moves exhausted. Stop defensively. */
+                break;
             }
         }
         /* Reverse. */

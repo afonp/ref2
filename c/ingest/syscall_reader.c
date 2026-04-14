@@ -25,8 +25,6 @@
 #define MAX_LINE     65536
 #define INIT_BUF     4096
 
-/* ── Per-fd accumulation ────────────────────────────────────────────────────── */
-
 typedef struct {
     int      fd;
     uint8_t  cur_dir;      /* 0 = write/send (client→server), 1 = read/recv */
@@ -110,8 +108,6 @@ static void fd_flush(fd_state_t *s)
     s->buf_cap = 0;
 }
 
-/* ── String literal parsing ─────────────────────────────────────────────────── */
-
 /*
  * Parse the strace string literal starting at *src (just after the opening
  * quote).  Writes decoded bytes into dst[0..dst_cap).  Returns byte count.
@@ -154,8 +150,6 @@ static size_t parse_strace_string(const char **src, uint8_t *dst, size_t dst_cap
     *src = p;
     return out;
 }
-
-/* ── Line parser ─────────────────────────────────────────────────────────────── */
 
 /*
  * Expected line format (simplified):
@@ -232,8 +226,6 @@ static void process_line(const char *line, uint8_t scratch[MAX_LINE])
     if (nbytes > 0)
         fd_append(s, scratch, nbytes, ts);
 }
-
-/* ── Public API ─────────────────────────────────────────────────────────────── */
 
 trace_t *ingest_syscall(const char *path)
 {
